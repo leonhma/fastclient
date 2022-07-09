@@ -1,0 +1,48 @@
+name: setup
+
+on:
+  push
+
+jobs:
+  setup:
+    if: ${{ !github.event.repository.is_template }}
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Change files
+      run: |
+        PACKAGE_NAME=$(echo "${{github.event.repository.name}}" | sed -r "s|[^A-Za-z0-9]+|_|g")
+
+        sed -i -E 's|name=\".*?\"|name="'"$PACKAGE_NAME"'"|g' setup.py
+        sed -i -E 's|author=\".*?\"|author="${{ github.event.repository.owner.login }}"|g' setup.py
+        sed -i -E 's|description=\".*?\"|description="${{ github.event.repository.description }}"|g' setup.py
+        sed -i -E 's|url=\".*?\"|url="${{ github.event.repository.html_url }}"|g' setup.py
+
+        perl -0777pi -e 's|<!--cut-->.*?<!--cut-->|## TODO\n\n- [ ] choose a license ([choosealicense.com](https://choosealicense\.com))|gs' README.md
+        sed -i -E 's|python_package_automation|'"$PACKAGE_NAME"'|' README.md
+
+        sed -i -E 's|project = ".*?"|project = "'"$PACKAGE_NAME"'"|g' docs/conf.py
+        sed -i -E 's|copyright = ".*?"|copyright = "${{ github.event.repository.license.name }}"|g' docs/conf.py
+        sed -i -E 's|author = ".*?"|author = "${{ github.event.repository.owner.login }}"|g' docs/conf.py
+
+        sed -i -E "s|automodule\:\: .+?$|automodule\:\: ""$PACKAGE_NAME""|gm" docs/reference.rst
+        sed -i -E "s|Welcome to .+?'s|Welcome to ""$PACKAGE_NAME""'s|g" docs/index.rst
+
+        sed -i -E 's|"name": ".*?"|"name": "'"$PACKAGE_NAME"'"|' .devcontainer.json
+
+        sed -i -E "s|python_package_automation|$PACKAGE_NAME|g" docs/setup.rst
+
+        sed -i -E "s|leonhma\/python-package-automation|${{github.repository}}|g" docs/setup.rst
+
+        mv python_package_automation/ "$PACKAGE_NAME"/
+
+        rm -f .github/workflows/setup.yml
+
+    - name: Push changes to github
+      run: |
+        git add -A
+        git config --global user.name "${{ github.event.sender.login }}"
+        git commit -m '[skip ci] Automatic setup of repo'
+        git push origin ${{ github.ref }}

@@ -27,6 +27,7 @@ If you want to set this package up for directly editing it's source code (for co
     .. code-block:: bash
 
         git clone https://github.com/leonhma/fastclient
+        cd fastclient
 
 2. Create a dynamic link
     This will make the package dynamically update with your local changes:

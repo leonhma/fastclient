@@ -1,13 +1,24 @@
-from multiprocessing import JoinableQueue, Pool, Value
+from multiprocessing import JoinableQueue, Pool, Queue, Value
 from multiprocessing.dummy import Process
-from time import time
-from typing import Callable
+from time import sleep, time
+from typing import Callable, Optional
 
 import requests
 from requests import Request, Response
 
 
-# TODO automatically scale up processes
+def _worker(running, p: Queue):
+    """Run tasks on the processing queue."""
+    while running.value:
+        if p.empty():
+            sleep(0.01)
+        request, callback = p.get()
+        print('doing request')
+        response = requests.request(request['method'], request['url'])
+        callback(response)
+        p.task_done()
+
+
 class HTTPWorkerPool:
     """A multithreaded http client with a rate limit.
 
@@ -18,7 +29,8 @@ class HTTPWorkerPool:
 
     """
 
-    def __init__(self, requests: int, period: float, processes: int = None, daemon: bool = False):
+    def __init__(
+            self, requests: int, period: float, processes: Optional[int] = None):
         """Initialize the worker pool.
 
         Parameters
@@ -29,36 +41,34 @@ class HTTPWorkerPool:
             The period of time in seconds.
         processes : int, optional, default=os.cpu_count()
             The number of processes to use.
-        daemon : bool, optional, default=False
-            Whether to run in daemon mode. If `True`, the pool will be stopped when the program ends.
-            If `False`, the program will continue running until all requests are finished.
 
         Raises
         ------
 
 
         """
-        self._pool = Pool(processes=processes)  # name 'em
         self._queue = JoinableQueue()
-        self._daemon = daemon
+        self._processing = JoinableQueue()
         self.rps = Value('f', 0.0)
         self._running = Value('b', True)
-        self._manager = Process(name='fastclient-manager', target=self._manager_, args=(period,
-                                requests, self._pool, self._queue, self.rps, self._running))
-                                
-        self._manager.daemon = True
-        self._manager.start()
+        self._ratelimiter = Process(name='fastclient-ratelimiter', target=self._ratelimiter_,
+                                    args=(requests, period, self.rps, self._running, self._queue, self._processing))
+        self._ratelimiter.daemon = True
+        self._ratelimiter.start()
+        self._workers = Pool(processes=processes, initializer=_worker,
+                             initargs=(self._running, self._processing), maxtasksperchild=50)
 
-    def __del__(self):
+    def __del__(self):  # keep running until everything is done if this is garbage-collected
         self.join()
 
-    def _manager_(self, period, requests, pool, queue, rps, running):
+    def _ratelimiter_(self, requests, period, rps, running, q: Queue, p: Queue):
+        """Move items between queue and processing according to the ratelimit."""
         limited = False
         current_requests = 0
         last_clear = 0.0
 
         while running.value:
-            if queue.empty():
+            if q.empty():
                 continue  # keep waiting for input. If join wasn't called, it will still be used.
 
             if current_requests >= requests:
@@ -73,34 +83,29 @@ class HTTPWorkerPool:
                 current_requests = 0
 
             if not limited:
-                print(f'in queue {queue.qsize()}')
-                print(f'running worker, {current_requests=}, {last_clear=}')
-                pool.apply_async(self._worker, queue)
+                print(f'{q.qsize()=}, {p.qsize()=}')
+                p.put(q.get())
+                q.task_done()
                 current_requests += 1
-
-    def _worker(self, queue: JoinableQueue):
-        (req, cb) = queue.get()
-        print(f'worker: {req=}, {cb=}')
-        print('calling cb')
-        cb(requests.send(req.prepare()))
-        queue.task_done()
-
-    def _terminate(self):
-        """Terminate the worker pool. If you want to use this, call `del <HTTPWorkerPool>` instead."""
-        self._manager.terminate()
-        self._pool.terminate()
-        self._manager.join()
-        self._pool.join()
 
     def join(self):
         """Wait for all submitted requests to finish. Blocks submission of further tasks."""
+        print('closing queue')
         self._queue.close()
+        print('joining queue')
         self._queue.join()
+        print('closing processing')
+        self._processing.close()
+        print('joining processing')
+        self._processing.join()
+        print('closing ratelimiter')
         self._running.value = False
-        self._manager.join()
-        self._pool.close()
-        self._pool.terminate()
-        self._pool.join()
+        print('closing workers')
+        self._workers.close()
+        print('terminating workers')
+        self._workers.terminate()
+        print('joining workers')
+        self._workers.join()
 
     def submit(self, request: Request, callback: Callable[[Response], None]):
         """Submit a request to the worker pool.

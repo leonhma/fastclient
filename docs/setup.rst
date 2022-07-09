@@ -5,13 +5,13 @@ To install this package, run:
 
 .. code-block:: bash 
 
-    pip install python_package_automation
+    pip install fastclient
 
 To install the latest testing version (may contain bugs), run:
 
 .. code-block:: bash
 
-    pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ python_package_automation
+    pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ fastclient
 
 .. note:: 
 
@@ -26,7 +26,7 @@ If you want to set this package up for directly editing it's source code (for co
 
     .. code-block:: bash
 
-        git clone https://github.com/leonhma/python-package-automation
+        git clone https://github.com/leonhma/fastclient
 
 2. Create a dynamic link
     This will make the package dynamically update with your local changes:

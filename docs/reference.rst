@@ -2,5 +2,5 @@ Reference
 =========
 
     
-.. automodule:: python_package_automation
+.. automodule:: fastclient
     :members:

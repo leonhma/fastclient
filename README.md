@@ -1,17 +1,10 @@
-# python_package_automation
+# fastclient
 
 This is a template that contains workflows to automatically perform testing, publish release assets and push them to pypi on release, issue templates, workflow cleanup, and some quality-of-life for python packages.
 
-<!--cut-->
-## How to use this template
+## TODO
 
-### Setup
-
-* First, think of a name for your package. Make sure it's not yet taken on pypi and testpypi.
-* Second, click 'use this template' in the upper right corner
-* Name your repository the name you have just thought of (non alphanumeric characters will automatically be replaced with undescores, while combining multiple consecutive illegal character into a single underscore), set a description and choose a license. This will enable the setup workflow to automatically fill in some of the details in the package files.
-* You should now see a job 'setup' pop up (after ca. 10 sec, you might have to refresh the page). Wait for it to finish and move on.
-<!--cut-->
+- [ ] choose a license ([choosealicense.com](https://choosealicense.com))
 
 ## Automated distribution on release
 

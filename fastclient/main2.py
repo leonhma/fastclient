@@ -5,6 +5,7 @@ from typing import Any, Callable, List, Mapping
 from datastructures import _RateLimitedPoolBuffer, _RateLimitedTokenBuffer
 from queue import Queue
 from urllib3 import PoolManager
+from math import floor
 
 
 class Event(Enum):
@@ -35,7 +36,7 @@ class _FastClientSyncManager(BaseManager):
 
 
 class FastClient:
-    def __init__(self, requests_per_second: float, pools: List) -> None:
+    def __init__(self, requests_per_second: float, pools: List, tokens: List[str]) -> None:
         self._manager = _FastClientSyncManager()
 
         # create proxies for synced datastructures
@@ -52,6 +53,8 @@ class FastClient:
         # assuming one request doesn't take longer than 1 second, otherwise this may be inefficient
         for pool in pools | [PoolManager(num_pools=1, maxsize=requests_per_second)]:
             self._pools.put(pool)
+        for token in tokens:
+            self._tokens.put(token)
 
     def __getitem__(self, key: str) -> Any:
         return self._context[key]
@@ -62,7 +65,7 @@ class FastClient:
     def request(self, request, id=None):
         self._requests.put((request, id))
 
-    def join(self):
+    def run(self):
         if not self._listener_registered:
             raise Exception('No listeners registered')
         # start processing
@@ -74,6 +77,13 @@ class FastClient:
         self._listener_registered = True
 
 
-def _worker(queue, tokens, context, limits):
+def _worker(queue, pools, tokens, context, listeners):
     while not queue.empty():
         request, id = queue.get()
+        response = pools.get().request_encode_url('GET', request, fields={'key': tokens.get()})
+        if floor(response.status % 100) == 2:
+            for listener in listeners[Event.RESPONSE]:
+                listener(context, response, id, lambda: None, lambda: None)
+        elif floor(response.status % 100) == 4:
+            for listener in listeners[Event.ERROR]:
+                listener(context, response, id, lambda: None, lambda: None)

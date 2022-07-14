@@ -1,21 +1,17 @@
-from multiprocessing import Value
-from time import sleep
-from fastclient.threaded import HTTPWorkerPool
+from fastclient import FastClient, Event
 
-recv = Value('i', 0)
-def cb(res):
-    global recv
-    recv.value += 1
-    print('response')
+def cb(context, response, id, repeat, exit_):
+    print(f'received response {response.status} for request {id}. current rps: {context["rps"]}')
 
 
 if __name__ == '__main__':
-    pool = HTTPWorkerPool(10, 1, 16)
-    for _ in range(100):
-        pool.submit({'method': 'GET', 'url': 'https://httpbin.org/get'}, cb)
 
-    for _ in range(10):
-        sleep(1)
-        print(pool.rps.value)
-
-    print(f'sent: 100 recevied: {recv.value}')
+    fc = FastClient(10, [])
+    print('created client')
+    for i in range(1):
+        fc.request({'method': 'GET', 'url': 'https://httpbin.org/get'}, i)
+    print('added 5 requests')
+    fc.on(Event.RESPONSE, cb)
+    print('reqistred cb')
+    fc.run()
+    print('ran client')

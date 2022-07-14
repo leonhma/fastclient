@@ -5,7 +5,7 @@ from time import sleep, time
 class _BaseRateLimitedItemBuffer:
     def __init__(self, seconds_per_view: float = float('+inf')):
         # how many times an item can be 'viewed' per second
-        self._sec_per_view = seconds_per_view
+        self._seconds_per_view = seconds_per_view
 
         self._items = []
         self._next_view = []
@@ -27,6 +27,8 @@ class _BaseRateLimitedItemBuffer:
 class _RateLimitedTokenBuffer(_BaseRateLimitedItemBuffer):
     """A rate-limited buffer that returns a random item from the buffer."""
     def get(self):
+        if self.empty():
+            return None
         idx = randrange(0, len(self._items))
         while self._next_view[idx] >= time():
             idx = randrange(0, len(self._items))
@@ -42,13 +44,24 @@ class _RateLimitedPoolBuffer(_BaseRateLimitedItemBuffer):
 
     def get(self):
         time_ = time()
-        if self._next_view[self._idx] > time_:  # if the current item is rate-limited
-            self._idx += 1  # go one right
-            if self._idx >= len(self._items):
-                self._idx = 0
-            if self._next_view[self._idx] > time_:  # everything is rate-limited
-                sleep(min(self._next_view)-time_)
-                return self.get()
+        prev_idx = self._idx
+        while self._idx > 0 and self._next_view[self._idx] > time_:
+            self._idx -= 1
+            if self._next_view[self._idx] <= time_:
+                break
+        else:
+            self._idx = prev_idx
+            if self._next_view[self._idx] > time_:
+                while self._idx < len(self._items) - 1:
+                    self._idx += 1
+                    if self._next_view[self._idx] <= time_:
+                        break
+                else:
+                    sleep_ = min(self._next_view)-time_
+                    sleep_ = max(sleep_, 0)
+                    sleep(sleep_)
+                    return self.get()
 
+        print(self._idx)
         self._next_view[self._idx] = time_ + self._seconds_per_view
         return self._items[self._idx]

@@ -4,6 +4,7 @@ from multiprocessing.connection import Connection, Pipe
 from typing import Mapping
 
 from urllib3 import PoolManager, ProxyManager
+from urllib3.contrib.socks import SOCKSProxyManager
 from urllib3.response import HTTPResponse
 
 from fastclient.types import Request, Response
@@ -145,6 +146,63 @@ class ProxyRequestPool(RequestPool):  # TODO test
         self._cpool = ProxyManager(self.proxy_url, num_pools, self.headers, self.proxy_headers,
                                    self.proxy_ssl_context, self.use_forwarding_for_https, maxsize=max_connections, block=True)
         self._tpool = ThreadPoolExecutor(max_connections, 'FastClient-ProxyRequestPool')
+        self._remaining_tasks = Value('L', 0)
+        (conn1, conn2) = Pipe(duplex=False)
+        self._sendpipe = conn2
+        return conn1
+
+
+class SOCKSProxyRequestPool(RequestPool):
+    def __init__(
+            self, proxy_url: str, username: str = None, password: str = None, headers: Mapping[str, str] = None, id_:
+            int = None):
+        """
+        Initialise a RequestPool.
+
+        Parameters
+        ----------
+        proxy_url : str
+            The url of the socks proxy
+        username : str, default=None
+            The username to use for the proxy
+        password : str, default=None
+            The password to use for the proxy
+        headers : Mapping[str, str], default=None
+            The headers to use by default
+        id_ : int, default=None
+            The pool's id (used for ratelimit-grouping)
+        """
+
+        self.proxy_url = proxy_url
+        self.username = username
+        self.password = password
+        self.headers = headers
+        self.id_ = id_
+        self._cpool = None
+        self._tpool = None
+        self._remaining_tasks = None
+        self._sendpipe = None
+
+    def _setup(self, num_pools: int, max_connections: int) -> Connection:
+        """
+        Set up the connection pool with parameters determined at runtime.
+
+        Parameters
+        ----------
+        num_pools : int
+            The number of pools to keep open.
+        max_connections : int
+            The maximum number of connections to open.
+
+        Returns
+        -------
+        Connection
+            The end of a Pipe. This will receive the responses.
+        """
+
+        self._cpool = SOCKSProxyManager(self.proxy_url, self.username, self.password,
+                                        num_pools, self.headers, maxsize=max_connections, block=True)
+        self._tpool = ThreadPoolExecutor(max_connections, 'FastClient-RequestPool')
         self._remaining_tasks = Value('L', 0)
         (conn1, conn2) = Pipe(duplex=False)
         self._sendpipe = conn2

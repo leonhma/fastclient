@@ -1,7 +1,7 @@
 from time import time
 from fastclient import FastClient
 from fastclient.types import Request, RequestEvent
-from fastclient.pools import RequestPool
+from fastclient.pools import SOCKSProxyRequestPool, ProxyRequestPool, RequestPool
 
 
 def cb(response):

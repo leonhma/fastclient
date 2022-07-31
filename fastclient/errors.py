@@ -1,0 +1,2 @@
+class NoListenersError(Exception):
+    pass

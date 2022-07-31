@@ -1,9 +1,11 @@
 from collections import defaultdict
 from multiprocessing import JoinableQueue, Process
-from multiprocessing.connection import Connection, Pipe, wait as wait_for_connection
-from random import choice
+from multiprocessing.connection import Connection, Pipe
+from multiprocessing.connection import wait as wait_for_connection
+from queue import Empty
 from time import time
 from typing import Any, Callable, Iterable, List, Mapping
+
 from fastclient.errors import NoListenersError
 from fastclient.pools import RequestPool
 from fastclient.types import Request, RequestEvent, Response
@@ -18,9 +20,7 @@ class FastClient():
 
     def __init__(
             self, rate: float, pools: List[RequestPool],
-            tokens: List[str],
-            auth_mode: str, auth_field_name: str, /, num_pools: int = 8,
-            max_connections: int = None) -> None:
+            /, num_pools: int = 8, max_connections: int = None) -> None:
         """
         Initialize the client.
 
@@ -46,15 +46,13 @@ class FastClient():
         self._pools = pools
         # rate limited token queue
         self._requests = JoinableQueue()
-        self._auth_mode = auth_mode
-        self._auth_field_name = auth_field_name
         self._num_pools = num_pools
         self._max_connections = max_connections or self._rate
 
         self._callbacks = defaultdict(list)
         self._callback_registered = False
 
-    def on(self, event: RequestEvent, callback: Callable[[Response, Mapping[str, Any]], None]):  # cb(res, ctx)
+    def on(self, event: RequestEvent, callback: Callable[[Response], None]):
         """
         Set up a callback for e specific event.
 
@@ -86,7 +84,6 @@ class FastClient():
         self._requests.put(request)
 
     def run(self):
-        # TODO start a controller server for synchronization purposes, excange locks for context manipulation, hand out 'tickets' to the controllers
         if not self._callback_registered:
             raise NoListenersError("No callback registered. Use FastClient.on to register a callback.")
 
@@ -95,17 +92,17 @@ class FastClient():
         poolgroups = defaultdict(list)
         pools = []
         for pool in self._pools:
-            if pool._id is None:
+            if pool.id_ is None:
                 pools.append(pool)
             else:
-                poolgroups[pool._id].append(pool)
+                poolgroups[pool.id_].append(pool)
 
         # create ticket connections
         connections = [Pipe() for _ in range(len(pools)+len(poolgroups))]
         ticket_recvs, ticket_sends = ([i for i, _ in connections], [j for _, j in connections])
+        del connections
 
-        # start their controllers
-        print(f'callbacks are: {self._callbacks=}')
+        # create their controllers
         controllers.extend(
             Process(
                 name='FastClient-controller',
@@ -113,6 +110,8 @@ class FastClient():
                 args=((pool,),
                       self._num_pools, self._max_connections, self._requests, ticket_recvs.pop(),
                       self._callbacks)) for pool in pools)
+        del pools
+
         controllers.extend(
             Process(
                 name='FastClient-controller',
@@ -121,16 +120,18 @@ class FastClient():
                       self._num_pools, self._max_connections, self._requests, ticket_recvs.pop(),
                       self._callbacks))
             for poolgroup in poolgroups.values())
+        del poolgroups
 
-        print("Starting controllers...")
         # start all controllers
         for controller in controllers:
             controller.start()
 
-        print('starting ticket creation')
         # start ticket creation
-        tickets = Process(name='FastClient-ticket-manager', target=FastClient._create_tickets, args=(self._rate, ticket_sends))
+        tickets = Process(name='FastClient-ticket-manager',
+                          target=FastClient._create_tickets, args=(self._rate, ticket_sends))
         tickets.start()
+
+        # now all the processing happens...
 
         # wait for request queue to be empty
         self._requests.close()
@@ -148,32 +149,40 @@ class FastClient():
     def _controller(pools: Iterable[RequestPool], num_pools: int, max_connections: int,
                     requests: JoinableQueue, tickets: Connection, callbacks: Mapping[RequestEvent, Callable]):
         # setup all connections to the attached RequestPools
-        connections = [pool._setup(num_pools, max_connections) for pool in pools]
-        while True:
-            if requests.empty() and max(pool._get_remaining_tasks() for pool in pools) == 0:
-                break
-            # wait for a ticket
-            if tickets.poll():
-                tickets.recv()
-                # choose the least busy pool
-                pool = choice(pools)
-                # make the request
-                pool._request(requests.get(block=False))
-                requests.task_done()
-            # await the responses from the connections
-            for connection in wait_for_connection(connections, timeout=0):
-                result = connection.recv()
-                print(f'got response {type(result)}')
-                if type(result) == Response:
-                    for callback in callbacks[RequestEvent.RESPONSE]:
-                        print('calling cb')
-                        callback(result)
-                else:
-                    for callback in callbacks[RequestEvent.ERROR]:
-                        callback(result)
-        for pool in pools:
-            pool._teardown()
-            del pool
+        try:
+            connections = [pool._setup(num_pools, max_connections) for pool in pools]
+            counter = 0
+            while True:
+                try:
+                    if counter == 0 and requests.empty() and max(pool._get_remaining_tasks() for pool in pools) == 0:
+                        break
+                    # check if a ticket is available
+                    if tickets.poll():
+                        tickets.recv()
+                        # choose the least busy pool
+                        pool = min(pools, key=lambda p: p._get_remaining_tasks())
+                        # make the request
+                        pool._request(requests.get(block=False))
+                        counter += 1
+                        requests.task_done()
+                    # check if a response is available
+                    for connection in wait_for_connection(connections, timeout=0):
+                        result = connection.recv()
+                        counter -= 1
+                        # call the callbacks
+                        if type(result) == Response:
+                            for callback in callbacks[RequestEvent.RESPONSE]:
+                                callback(result)
+                        else:
+                            for callback in callbacks[RequestEvent.ERROR]:
+                                callback(result)
+                except Empty:
+                    pass
+        finally:
+            # close all pools
+            for pool in pools:
+                pool._teardown()
+                del pool
 
     @staticmethod
     def _create_tickets(rate: float, connections: List[Connection]):
@@ -183,6 +192,5 @@ class FastClient():
             time_ = time()
             if time_ - last_tickets > 1 / rate:
                 for connection in connections:
-                    print('sending a ticket')
                     connection.send('ticket')
                 last_tickets = time_

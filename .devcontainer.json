@@ -18,6 +18,7 @@
             "settings": {
                 "esbonio.sphinx.buildDir": "${workspaceFolder}/docs/_build",
                 "esbonio.sphinx.confDir": "${workspaceFolder}/docs",
+                "python.linting.pylintEnabled": false,
                 "python.linting.pylamaEnabled": true,
                 "python.linting.enabled": true,
                 "files.autoSave": "afterDelay",

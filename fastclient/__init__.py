@@ -1,7 +1,6 @@
 from collections import defaultdict
 from multiprocessing import JoinableQueue, Process
 from multiprocessing.connection import Connection, Pipe, wait as wait_for_connection
-from queue import Empty
 from random import choice
 from time import time
 from typing import Any, Callable, Iterable, List, Mapping
@@ -56,6 +55,17 @@ class FastClient():
         self._callback_registered = False
 
     def on(self, event: RequestEvent, callback: Callable[[Response, Mapping[str, Any]], None]):  # cb(res, ctx)
+        """
+        Set up a callback for e specific event.
+
+        Parameters
+        ----------
+        event : RequestEvent
+            The event to listen for
+        callback : Callable[[Response, Mapping[str, Any]], None]
+            A callback that receives the response and the context (this is synchronized between callbacks)
+        """
+
         self._callbacks[event].append(callback)
         self._callback_registered = True
 
@@ -139,32 +149,31 @@ class FastClient():
                     requests: JoinableQueue, tickets: Connection, callbacks: Mapping[RequestEvent, Callable]):
         # setup all connections to the attached RequestPools
         connections = [pool._setup(num_pools, max_connections) for pool in pools]
-        try:
-            while True:
-                # wait for a ticket
-                if tickets.poll():
-                    tickets.recv()
-                    # choose the least busy pool
-                    pool = choice(pools)
-                    # make the request
-                    pool._request(requests.get(block=False))
-                    requests.task_done()
-                # await the responses from the connections
-                for connection in wait_for_connection(connections, timeout=0):
-                    result = connection.recv()
-                    print(f'got response {type(result)}')
-                    if type(result) == Request:
-                        for callback in callbacks[RequestEvent.RESPONSE]:
-                            print('calling cb')
-                            callback(result, None)
-                    else:
-                        for callback in callbacks[RequestEvent.ERROR]:
-                            callback(result, None)
-        finally:
-            print('finally closing all connections')
-            for pool in pools:
-                pool._teardown()
-                del pool
+        while True:
+            if requests.empty() and max(pool._get_remaining_tasks() for pool in pools) == 0:
+                break
+            # wait for a ticket
+            if tickets.poll():
+                tickets.recv()
+                # choose the least busy pool
+                pool = choice(pools)
+                # make the request
+                pool._request(requests.get(block=False))
+                requests.task_done()
+            # await the responses from the connections
+            for connection in wait_for_connection(connections, timeout=0):
+                result = connection.recv()
+                print(f'got response {type(result)}')
+                if type(result) == Response:
+                    for callback in callbacks[RequestEvent.RESPONSE]:
+                        print('calling cb')
+                        callback(result)
+                else:
+                    for callback in callbacks[RequestEvent.ERROR]:
+                        callback(result)
+        for pool in pools:
+            pool._teardown()
+            del pool
 
     @staticmethod
     def _create_tickets(rate: float, connections: List[Connection]):

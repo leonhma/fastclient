@@ -2,8 +2,8 @@ name: test
 
 on:
   push:
-   paths-ignore:
-     - "docs/**"
+    paths-ignore:
+      - "docs/**"
 
 jobs:
   staging:  # too much code bc github doesnt allow for file detection in it's if directory

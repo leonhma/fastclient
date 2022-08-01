@@ -4,8 +4,11 @@ from fastclient.types import Request, RequestEvent
 from fastclient.pools import SOCKSProxyRequestPool, ProxyRequestPool, RequestPool
 
 
-def cb(response):
-    print(f'received response {response.status} for request {response.id}')
+def cb(response, ctx):
+    if 'num' not in ctx:
+        ctx['num'] = 0
+    ctx['num'] += 1
+    print(f'received response {response.status} for request {response.id}. {ctx["num"]=}')
 
 
 if __name__ == '__main__':

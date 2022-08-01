@@ -1,5 +1,5 @@
 from collections import defaultdict
-from multiprocessing import JoinableQueue, Process
+from multiprocessing import JoinableQueue, Lock, Manager, Process
 from multiprocessing.connection import Connection, Pipe
 from multiprocessing.connection import wait as wait_for_connection
 from queue import Empty
@@ -9,6 +9,7 @@ from typing import Any, Callable, Iterable, List, Mapping
 from fastclient.errors import NoListenersError
 from fastclient.pools import RequestPool
 from fastclient.types import Request, RequestEvent, Response
+from threading import Lock
 
 # TODO parameters (rate) and context dicts passed to callbacks
 
@@ -20,7 +21,7 @@ class FastClient():
 
     def __init__(
             self, rate: float, pools: List[RequestPool],
-            /, num_pools: int = 8, max_connections: int = None) -> None:
+            num_pools: int = 8, max_connections: int = None, use_context: bool = True) -> None:
         """
         Initialize the client.
 
@@ -48,6 +49,12 @@ class FastClient():
         self._requests = JoinableQueue()
         self._num_pools = num_pools
         self._max_connections = max_connections or self._rate
+
+        self._use_context = use_context
+
+        self._context_manager = Manager() if self._use_context else None
+        self._context = self._context_manager.dict() if self._use_context else None
+        self._context_lock = self._context_manager.Lock() if self._use_context else None
 
         self._callbacks = defaultdict(list)
         self._callback_registered = False
@@ -109,7 +116,7 @@ class FastClient():
                 target=FastClient._controller,
                 args=((pool,),
                       self._num_pools, self._max_connections, self._requests, ticket_recvs.pop(),
-                      self._callbacks)) for pool in pools)
+                      self._callbacks, self._use_context, self._context_lock, self._context)) for pool in pools)
         del pools
 
         controllers.extend(
@@ -118,7 +125,7 @@ class FastClient():
                 target=FastClient._controller,
                 args=(tuple(poolgroup),
                       self._num_pools, self._max_connections, self._requests, ticket_recvs.pop(),
-                      self._callbacks))
+                      self._callbacks, self._use_context, self._context_lock, self._context))
             for poolgroup in poolgroups.values())
         del poolgroups
 
@@ -146,8 +153,15 @@ class FastClient():
             controller.join()
 
     @staticmethod
-    def _controller(pools: Iterable[RequestPool], num_pools: int, max_connections: int,
-                    requests: JoinableQueue, tickets: Connection, callbacks: Mapping[RequestEvent, Callable]):
+    def _controller(pools: Iterable[RequestPool],
+                    num_pools: int,
+                    max_connections: int,
+                    requests: JoinableQueue,
+                    tickets: Connection,
+                    callbacks: Mapping[RequestEvent, Callable],
+                    use_context: bool,
+                    context_lock: Lock,
+                    context: Mapping[str, Any]):
         # setup all connections to the attached RequestPools
         try:
             connections = [pool._setup(num_pools, max_connections) for pool in pools]
@@ -170,12 +184,16 @@ class FastClient():
                         result = connection.recv()
                         counter -= 1
                         # call the callbacks
+                        if use_context:
+                            context_lock.acquire()
                         if type(result) == Response:
                             for callback in callbacks[RequestEvent.RESPONSE]:
-                                callback(result)
+                                callback(result, context) if use_context else callback(result)
                         else:
                             for callback in callbacks[RequestEvent.ERROR]:
-                                callback(result)
+                                callback(result, context) if use_context else callback(result)
+                        if use_context:
+                            context_lock.release()
                 except Empty:
                     pass
         finally:

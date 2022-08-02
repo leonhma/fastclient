@@ -9,7 +9,6 @@ from typing import Any, Callable, Iterable, List, Mapping
 from fastclient.errors import StoreNotSupportedError, NoListenersError
 from fastclient.pools import RequestPool
 from fastclient.types import Request, RequestEvent, Response
-from threading import Lock
 
 # TODO parameters (rate) and context dicts passed to callbacks
 
@@ -42,6 +41,9 @@ class FastClient():
 
         self._callbacks = defaultdict(list)
         self._callback_registered = False
+
+    def __del__(self):
+        self._ctx_manager.shutdown()
 
     def __setitem__(self, key, value):
         if not self._use_store:
@@ -148,6 +150,7 @@ class FastClient():
         if self._use_rps:
             rps_counter.terminate()
             rps_counter.join()
+            rps_recv.close()
 
     @staticmethod
     def _controller(pools: Iterable[RequestPool],
@@ -167,52 +170,60 @@ class FastClient():
         # setup all connections to the attached RequestPools
         connections = [pool._setup(num_pools, max_connections) for pool in pools]
         counter = 0
-        while True:
-            try:
-                if counter == 0 and requests.empty():
-                    break
-                # check if a ticket is available
-                if tickets.poll():
-                    tickets.recv()
-                    # choose the least busy pool
-                    pool = min(pools, key=lambda p: p._get_remaining_tasks())
-                    # make the request
-                    pool._request(requests.get(block=False))
-                    counter += 1
-                    requests.task_done()
-                # check if a response is available
-                for connection in wait_for_connection(connections, timeout=0):
-                    result = connection.recv()
-                    counter -= 1
-                    if use_rps:
-                        rps_send.send(None)
-                    # call the callbacks
-                    # TODO if the retry signal is given, put the requests into the queue again
-                    # TODO if the stop signal is given, stop
-                    # construct context
-                    context = {
-                        'retry': Callable,
-                        'exit': Callable
-                    }
-                    if use_rps:
-                        context.update({
-                            'rps': rps.value,
-                            'rps10': rps10.value,
-                            'rps1': rps1.value
-                        })
-                    if use_store:
-                        store_lock.acquire()
-                        context['store'] = store
-                    if type(result) == Response:
-                        for callback in callbacks[RequestEvent.RESPONSE]:
-                            callback(result, context)
-                    else:
-                        for callback in callbacks[RequestEvent.ERROR]:
-                            callback(result, context)
-                    if use_store:
-                        store_lock.release()
-            except Empty:
-                pass
+        try:
+            while True:
+                try:
+                    if counter == 0 and requests.empty():
+                        break
+                    # check if a ticket is available
+                    if tickets.poll():
+                        tickets.recv()
+                        # choose the least busy pool
+                        pool = min(pools, key=lambda p: p._get_remaining_tasks())
+                        # make the request
+                        pool._request(requests.get(block=False))
+                        counter += 1
+                        requests.task_done()
+                    # check if a response is available
+                    for connection in wait_for_connection(connections, timeout=0):
+                        result = connection.recv()
+                        counter -= 1
+                        if use_rps:
+                            rps_send.send(None)
+                        # call the callbacks
+                        # TODO if the retry signal is given, put the requests into the queue again
+                        # TODO if the stop signal is given, stop
+                        # construct context
+                        context = {
+                            'retry': Callable,
+                            'exit': Callable
+                        }
+                        if use_rps:
+                            context.update({
+                                'rps': rps.value,
+                                'rps10': rps10.value,
+                                'rps1': rps1.value
+                            })
+                        if use_store:
+                            store_lock.acquire()
+                            context['store'] = store
+                        if type(result) == Response:
+                            for callback in callbacks[RequestEvent.RESPONSE]:
+                                callback(result, context)
+                        else:
+                            for callback in callbacks[RequestEvent.ERROR]:
+                                callback(result, context)
+                        if use_store:
+                            store_lock.release()
+                except Empty:
+                    pass
+        finally:
+            for pool in pools:
+                pool._teardown()
+            for connection in connections:
+                connection.close()
+            tickets.close()
+            rps_send.close()
 
     @staticmethod
     def _create_tickets(rate: float, connections: List[Connection]):

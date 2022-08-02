@@ -1,4 +1,4 @@
-from os import popen,getenv
+from os import popen, getenv
 
 
 def get(ver, i):
@@ -7,15 +7,17 @@ def get(ver, i):
     except IndexError:
         return 0
 
+
 def greater_or_equal(ver1: str, ver2: str) -> bool:
     # compare from major to right, either higher, or longer one wins
     ver1 = [int(x) for x in ver1.split('.')]
     ver2 = [int(x) for x in ver2.split('.')]
     if ver1[0] != ver2[0]:
-        return ver1[0]>ver2[0]
+        return ver1[0] > ver2[0]
     if get(ver1, 1) != get(ver2, 1):
-        return get(ver1, 1)>get(ver2, 1)
+        return get(ver1, 1) > get(ver2, 1)
     return True
+
 
 stream = popen('vermin --no-parse-comments -f parsable --no-config . | tail -n 1')
 vermins = stream.read().split(':')[:-1]
@@ -26,7 +28,8 @@ out = set()
 exceptions = []
 
 for vermin in vermins:
-    if not vermin: continue
+    if not vermin:
+        continue
     if vermin.startswith('!') or vermin.startswith('~'):
         exceptions.append(vermin[1:])
         continue
@@ -36,7 +39,8 @@ for vermin in vermins:
 
 for exception in exceptions:
     for x in out:
-        if x.startswith(exception): out.remove(x)
+        if x.startswith(exception):
+            out.remove(x)
 
 str_ = sorted(list(out)).__repr__().replace(' ', '').replace("'", '"')
 print('{"version":'+str_+'}')

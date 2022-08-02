@@ -16,4 +16,3 @@ class PoolTest(unittest.TestCase):
         fastclient.on(RequestEvent.RESPONSE, cb)
         fastclient.run()
         self.assertLessEqual(fastclient['rps'], 50)
-

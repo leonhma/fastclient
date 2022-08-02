@@ -4,6 +4,7 @@ import unittest
 from fastclient.pools import RequestPool
 from fastclient.types import Request
 
+
 class PoolTest(unittest.TestCase):
     def setUp(self):
         self.pool = RequestPool()

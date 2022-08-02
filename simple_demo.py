@@ -4,8 +4,11 @@ from fastclient.types import Request, RequestEvent
 from fastclient.pools import RequestPool
 
 # the callback
+
+
 def cb(response, ctx):
     print(f'received response {response.status} for request {response.id}. {ctx["rps"]=}')
+
 
 # create the fastclient
 fc = FastClient(1000, [RequestPool()])

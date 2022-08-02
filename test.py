@@ -5,16 +5,13 @@ from fastclient.pools import SOCKSProxyRequestPool, ProxyRequestPool, RequestPoo
 
 
 def cb(response, ctx):
-    if 'num' not in ctx:
-        ctx['num'] = 0
-    ctx['num'] += 1
-    print(f'received response {response.status} for request {response.id}. {ctx["num"]=}')
+    print(f'received response {response.status} for request {response.id}. {ctx["rps"]=}')
 
 
 if __name__ == '__main__':
     fc = FastClient(
-        100, [RequestPool()])
-    for i in range(100):
+        1000, [RequestPool()], use_store=False)
+    for i in range(10000):
         fc.request(Request('GET', 'https://httpbin.org/get', id=i))
     fc.on(RequestEvent.RESPONSE, cb)
     start = time()

@@ -6,24 +6,7 @@ on:
       - "docs/**"
 
 jobs:
-  staging:  # too much code bc github doesnt allow for file detection in it's if directory
-    runs-on: ubuntu-latest
-    outputs:
-      continue: ${{ steps.continue.outputs.continue }}
-    steps:
-      - uses: actions/checkout@v2
-      - name: check whether to run
-        id: continue
-        run: |
-          if ! test -f '.github/workflows/setup.yml' && test -f '**/test*.py'; then
-            echo "::set-output name=continue::true"
-          else
-            echo "::set-output name=continue::false"
-          fi
-
   create-matrix:
-    needs: staging
-    if: fromJson(needs.staging.outputs.continue)
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}

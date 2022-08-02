@@ -1,0 +1,37 @@
+
+name: coverage
+
+on:
+  push:
+
+jobs:
+  cover:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-python@v2
+        with:
+          python-version: 3.9
+      - name: Install project & dependencies
+        run: |
+          pip install --upgrade pip
+          pip install coverage
+          if test -f requirements.txt; then
+            echo "::group::Installing requirements.txt"
+            pip install -r requirements.txt
+            echo "::endgroup::"
+          fi
+          if test -f setup.py; then
+            echo "::group::Installing package"
+            pip install .
+            echo "::endgroup::"
+          fi
+      - name: Run unittests
+        run: |
+          coverage run -m unittest discover
+          coverage xml -o cobertura.xml
+      - name: Upload unittest results
+        env:
+          CODACY_PROJECT_TOKEN: ${{ secrets.CODACY_PROJECT_TOKEN }}
+        run: |
+          bash <(curl -Ls https://coverage.codacy.com/get.sh) report -r cobertura.xml

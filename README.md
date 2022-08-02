@@ -1,5 +1,7 @@
 # fastclient
 
+[![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2Fleonhma%2Ffastclient.svg?type=small)](https://app.fossa.com/projects/git%2Bgithub.com%2Fleonhma%2Ffastclient?ref=badge_small)
+
 This is a template that contains workflows to automatically perform testing, publish release assets and push them to pypi on release, issue templates, workflow cleanup, and some quality-of-life for python packages.
 
 ## TODO

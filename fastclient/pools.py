@@ -87,12 +87,9 @@ class RequestPool:
 
     @staticmethod
     def _handle_future(future):
-        try:
-            sendpipe, remaining_tasks, res = future.result()
-            sendpipe.send(res)
-            remaining_tasks.value -= 1
-        except BrokenPipeError:
-            pass
+        sendpipe, remaining_tasks, res = future.result()
+        sendpipe.send(res)
+        remaining_tasks.value -= 1
 
 
 class ProxyRequestPool(RequestPool):  # TODO test

@@ -15,51 +15,31 @@ from threading import Lock
 
 
 class FastClient():
-    """
-    Wicked-fast API-client that supports rate-limiting, proxy rotation, token rotation and multiprocessing.
-    """
+    """Wicked-fast API-client that supports rate-limiting, proxy rotation, token rotation and multiprocessing."""
 
-    def __init__(
-            self, rate: float, pools: List[RequestPool],
-            num_pools: int = 8, max_connections: int = None, use_store: bool = True, use_rps: bool = True) -> None:
-        """
-        Initialize the client.
-
-        Parameters
-        ----------
-        rate : float
-            The request ratelimit in requests per second
-        pools : List[RequestPool]
-            The list of request pools to use
-        tokens : List[str]
-            The list of tokens to use
-        auth_mode : str
-        auth_field_name : str
-            The name of the auth field. (eg. 'Authorization' or 'key')
-        num_pools : int, default = 8
-            The number of pools to different hosts to keep open
-        max_connections : int, default = None
-            The maximum number of open connections. If a single request takes longer than one second, this will be a limit to the request speed,
-            although setting this higher might cause rate-limiting by the API
-        """
+    def __init__(self,
+                 rate: float,
+                 pools: List[RequestPool],
+                 *,
+                 num_pools: int = 8,
+                 max_connections: int = None,
+                 use_store: bool = True,
+                 use_rps: bool = True) -> None:
         self._rate = rate
         self._pools = pools
         # TODO rate limited token queue
-        self._requests = JoinableQueue()
         self._num_pools = num_pools
         self._max_connections = max_connections or self._rate
-
         self._use_store = use_store
         self._use_rps = use_rps
 
-        # features
+        self._requests = JoinableQueue()
+
         self._ctx_manager = Manager() if self._use_store or self._use_rps else None
 
-        # store
         self._store = self._ctx_manager.dict() if self._use_store else None
         self._store_lock = self._ctx_manager.Lock() if self._use_store else None
 
-        # callbacks
         self._callbacks = defaultdict(list)
         self._callback_registered = False
 
@@ -68,9 +48,7 @@ class FastClient():
             raise StoreNotSupportedError
 
         self._store_lock.acquire()
-
         self._store[key] = value
-
         self._store_lock.release()
 
     def __getitem__(self, key):
@@ -80,34 +58,10 @@ class FastClient():
         return self._store[key]
 
     def on(self, event: RequestEvent, callback: Callable[[Response], None]):
-        """
-        Set up a callback for an specific event.
-
-        Parameters
-        ----------
-        event : RequestEvent
-            The event to listen for
-        callback : Callable[[Response, Mapping[str, Any]], None]
-            A callback that receives the response and the context (this is synchronized between callbacks)
-        """
-
         self._callbacks[event].append(callback)
         self._callback_registered = True
 
     def request(self, request: Request):
-        """
-        Add a request to the processing queue.
-
-        Parameters
-        ----------
-        request : Request
-            The request object.
-
-        Note
-        ----
-            This method only stages the requests. Call :meth:`run` to start the processing.
-            All responses will trigger their respective callbacks, which have been registered via :meth:`on`.
-        """
         self._requests.put(request)
 
     def run(self):
@@ -116,14 +70,6 @@ class FastClient():
 
         controllers: List[Process] = []
         rps_counter = None
-        # create groups based on the RequestPool's ids
-        poolgroups = defaultdict(list)
-        pools = []
-        for pool in self._pools:
-            if pool.id_ is None:
-                pools.append(pool)
-            else:
-                poolgroups[pool.id_].append(pool)
 
         # rps
         rps = self._ctx_manager.Value('f', 0.0) if self._use_rps else None
@@ -134,18 +80,19 @@ class FastClient():
         rps_recv = recv if self._use_rps else None
         rps_send = send if self._use_rps else None
 
+        # create groups based on the RequestPool's ids
+        poolgroups = defaultdict(list)
+        pools = []
+        for pool in self._pools:
+            if pool.id_ is None:
+                pools.append(pool)
+            else:
+                poolgroups[pool.id_].append(pool)
+
         # create ticket connections
         connections = [Pipe() for _ in range(len(pools)+len(poolgroups))]
         ticket_recvs, ticket_sends = ([i for i, _ in connections], [j for _, j in connections])
         del connections
-
-        # create rps counter
-        if self._use_rps:
-            rps_counter = Process(
-                name='FastClient-rps',
-                target=FastClient._count_rps,
-                args=(rps_recv, rps, rps10, rps1))
-            rps_counter.start()
 
         # create their controllers
         controllers.extend(
@@ -170,6 +117,14 @@ class FastClient():
         # start all controllers
         for controller in controllers:
             controller.start()
+
+        # create rps counter
+        if self._use_rps:
+            rps_counter = Process(
+                name='FastClient-rps',
+                target=FastClient._count_rps,
+                args=(rps_recv, rps, rps10, rps1))
+            rps_counter.start()
 
         # start ticket creation
         tickets = Process(name='FastClient-ticket-manager',
@@ -265,7 +220,7 @@ class FastClient():
         last_tickets = 0
         while True:  # this is meant to be manually terminated
             time_ = time()
-            if time_ - last_tickets > 1 / rate:
+            if time_ - last_tickets > (1 / rate):
                 for connection in connections:
                     connection.send(None)
                 last_tickets = time_
@@ -279,19 +234,16 @@ class FastClient():
         list1 = []
 
         while True:
-            # wait for response
             rps_recv.recv()
 
             time_ = time()
             count += 1
             list1.append(time_)
-            # move lists
             while len(list1) > 0 and list1[0] < time_-1:
                 list9.append(list1.pop(0))
             while len(list9) > 0 and list9[0] < time_-1:
                 list9.pop(0)
 
-            # update values
             rps.value = count/(time_-start)
             rps1.value = len(list1)
             rps10.value = len(list1)+len(list9)

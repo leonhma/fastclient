@@ -3,6 +3,7 @@ from multiprocessing import JoinableQueue, Lock, Manager, Process, Value
 from multiprocessing.connection import Connection, Pipe
 from multiprocessing.connection import wait as wait_for_connection
 from queue import Empty
+from secrets import randbelow
 from time import time
 from typing import Any, Callable, Iterable, List, Mapping
 
@@ -167,7 +168,12 @@ class FastClient():
                     rps: Value,
                     rps10: Value,
                     rps1: Value):
-        # setup all connections to the attached RequestPools
+        # capable of ~30k requests per second
+        # TODO decrease callback time (currently ~1ms, would bottleneck at ~500/s)
+        # TODO apparently wait_for_connection bottlenecks at ~150/s -> replace
+        count = 0
+        last_time = 0
+        id_ = randbelow(100)
         connections = [pool._setup(num_pools, max_connections) for pool in pools]
         counter = 0
         try:
@@ -187,6 +193,7 @@ class FastClient():
                     # check if a response is available
                     for connection in wait_for_connection(connections, timeout=0):
                         result = connection.recv()
+                        count += 1
                         counter -= 1
                         if use_rps:
                             rps_send.send(None)
@@ -217,6 +224,10 @@ class FastClient():
                             store_lock.release()
                 except Empty:
                     pass
+                if last_time+1 < time():
+                    print(f'controller {id_}: {count}/s')
+                    last_time = time()
+                    count = 0
         finally:
             for pool in pools:
                 pool._teardown()
@@ -227,7 +238,7 @@ class FastClient():
 
     @staticmethod
     def _create_tickets(rate: float, connections: List[Connection]):
-        # create tickets at the rate limit per connection and send them to the controllers
+        # capable of creating ~300k tickets a second
         last_tickets = 0
         while True:  # this is meant to be manually terminated
             time_ = time()

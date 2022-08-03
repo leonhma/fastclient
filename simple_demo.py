@@ -11,9 +11,9 @@ def cb(response, ctx):
 
 
 # create the fastclient
-fc = FastClient(1000, [RequestPool()])
+fc = FastClient(100, [RequestPool(), RequestPool()], use_store=False)
 # queue 10 requests to httpbin.org
-for i in range(10):
+for i in range(1000):
     fc.request(Request('GET', 'https://httpbin.org/get', id=i))
 # register the listener for response events
 fc.on(RequestEvent.RESPONSE, cb)

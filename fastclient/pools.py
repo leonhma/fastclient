@@ -79,12 +79,15 @@ class RequestPool:
 
     def _teardown(self):
         """Shutdown the pool."""
-        self._tpool.shutdown(wait=False)
+        self._tpool.shutdown(wait=True)
         self._sendpipe.close()
 
     @staticmethod
     def _handle_request(sendpipe, remaining_tasks, pool: PoolManager, method, url, fields, headers, id) -> HTTPResponse:
-        return sendpipe, remaining_tasks, Response(pool.request(method, url, fields, headers), id)
+        try:
+            return sendpipe, remaining_tasks, Response(pool.request(method, url, fields, headers), id)
+        except Exception as e:
+            return sendpipe, remaining_tasks, e
 
     @staticmethod
     def _handle_future(future):

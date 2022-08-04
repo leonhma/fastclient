@@ -1,9 +1,10 @@
+import contextlib
 from collections import defaultdict
 from multiprocessing import JoinableQueue, Lock, Manager, Process, Value
 from multiprocessing.connection import Connection, Pipe
 from multiprocessing.connection import wait as wait_for_connection
 from queue import Empty
-from secrets import randbelow
+from random import randint
 from time import time
 from typing import Any, Callable, Iterable, List, Mapping
 
@@ -138,7 +139,12 @@ class FastClient():
 
         # wait for request queue to be empty
         self._requests.close()
-        self._requests.join()
+        try:
+            self._requests.join()
+        except KeyboardInterrupt as e:
+            for controller in controllers:
+                controller.terminate()
+            raise e
 
         # stop ticket creation
         tickets.terminate()
@@ -154,63 +160,37 @@ class FastClient():
             rps_recv.close()
 
     @staticmethod
-    def _controller(pools: Iterable[RequestPool],
-                    num_pools: int,
-                    max_connections: int,
-                    requests: JoinableQueue,
-                    tickets: Connection,
-                    callbacks: Mapping[RequestEvent, Callable],
-                    use_store: bool,
-                    store_lock: Lock,
-                    store: Mapping[str, Any],
-                    use_rps: bool,
-                    rps_send: Connection,
-                    rps: Value,
-                    rps10: Value,
-                    rps1: Value):
-        # capable of ~30k requests per second
-        # TODO decrease callback time (currently ~1ms, would bottleneck at ~500/s)
-        # TODO apparently wait_for_connection bottlenecks at ~150/s -> replace
+    def _controller(
+            pools: Iterable[RequestPool],
+            num_pools: int, max_connections: int, requests: JoinableQueue, tickets: Connection,
+            callbacks: Mapping[RequestEvent, Callable],
+            use_store: bool, store_lock: Lock, store: Mapping[str, Any],
+            use_rps: bool, rps_send: Connection, rps: Value, rps10: Value, rps1: Value):
         count = 0
         last_time = 0
-        id_ = randbelow(100)
+        id_ = randint(1, 99)
         connections = [pool._setup(num_pools, max_connections) for pool in pools]
         counter = 0
         try:
             while True:
-                try:
+                with contextlib.suppress(Empty):
                     if counter == 0 and requests.empty():
                         break
-                    # check if a ticket is available
                     if tickets.poll():
                         tickets.recv()
-                        # choose the least busy pool
                         pool = min(pools, key=lambda p: p._get_remaining_tasks())
-                        # make the request
                         pool._request(requests.get(block=False))
                         counter += 1
                         requests.task_done()
-                    # check if a response is available
                     for connection in wait_for_connection(connections, timeout=0):
                         result = connection.recv()
                         count += 1
                         counter -= 1
                         if use_rps:
                             rps_send.send(None)
-                        # call the callbacks
-                        # TODO if the retry signal is given, put the requests into the queue again
-                        # TODO if the stop signal is given, stop
-                        # construct context
-                        context = {
-                            'retry': Callable,
-                            'exit': Callable
-                        }
+                        context = {'retry': Callable, 'exit': Callable}
                         if use_rps:
-                            context.update({
-                                'rps': rps.value,
-                                'rps10': rps10.value,
-                                'rps1': rps1.value
-                            })
+                            context |= {'rps': rps.value, 'rps10': rps10.value, 'rps1': rps1.value}
                         if use_store:
                             store_lock.acquire()
                             context['store'] = store
@@ -222,9 +202,7 @@ class FastClient():
                                 callback(result, context)
                         if use_store:
                             store_lock.release()
-                except Empty:
-                    pass
-                if last_time+1 < time():
+                if last_time + 1 < time():
                     print(f'controller {id_}: {count}/s')
                     last_time = time()
                     count = 0
@@ -238,34 +216,32 @@ class FastClient():
 
     @staticmethod
     def _create_tickets(rate: float, connections: List[Connection]):
-        # capable of creating ~300k tickets a second
-        last_tickets = 0
-        while True:  # this is meant to be manually terminated
-            time_ = time()
-            if time_ - last_tickets > (1 / rate):
-                for connection in connections:
-                    connection.send(None)
-                last_tickets = time_
+        with contextlib.suppress(KeyboardInterrupt):
+            last_tickets = 0
+            while True:
+                time_ = time()
+                if time_ - last_tickets > 1 / rate:
+                    for connection in connections:
+                        connection.send(None)
+                    last_tickets = time_
 
     @staticmethod
     def _count_rps(rps_recv: Connection, rps: Value, rps10: Value, rps1: Value):
-        count = 0
-        start = time()
-
-        list9 = []
-        list1 = []
-
-        while True:
-            rps_recv.recv()
-
-            time_ = time()
-            count += 1
-            list1.append(time_)
-            while len(list1) > 0 and list1[0] < time_-1:
-                list9.append(list1.pop(0))
-            while len(list9) > 0 and list9[0] < time_-1:
-                list9.pop(0)
-
-            rps.value = count/(time_-start)
-            rps1.value = len(list1)
-            rps10.value = len(list1)+len(list9)
+        with contextlib.suppress(KeyboardInterrupt):
+            count = 0
+            start = time()
+            list9 = []
+            list1 = []
+            while True:
+                with contextlib.suppress(ZeroDivisionError):
+                    rps_recv.recv()
+                    time_ = time()
+                    count += 1
+                    list1.append(time_)
+                    while list1 and list1[0] < time_ - 1:
+                        list9.append(list1.pop(0))
+                    while list9 and list9[0] < time_ - 1:
+                        list9.pop(0)
+                    rps.value = count / (time_ - start)
+                    rps1.value = len(list1)
+                    rps10.value = len(list1) + len(list9)

@@ -105,7 +105,8 @@ class FastClient():
                 args=((pool,),
                       self._num_pools, self._max_connections, self._requests, ticket_recvs.pop(),
                       self._callbacks, self._use_store, self._store_lock, self._store, self._use_rps,
-                      rps_send, rps, rps10, rps1)) for pool in pools)
+                      rps_send, rps, rps10, rps1),
+                      daemon=True) for pool in pools)
         del pools
 
         controllers.extend(
@@ -114,7 +115,8 @@ class FastClient():
                 target=FastClient._controller,
                 args=(tuple(poolgroup),
                       self._num_pools, self._max_connections, self._requests, ticket_recvs.pop(),
-                      self._callbacks, self._use_store, self._store_lock, self._store, self._use_rps, rps_send, rps, rps10, rps1))
+                      self._callbacks, self._use_store, self._store_lock, self._store, self._use_rps, rps_send, rps, rps10, rps1),
+                      daemon=True)
             for poolgroup in poolgroups.values())
         del poolgroups
 
@@ -127,12 +129,14 @@ class FastClient():
             rps_counter = Process(
                 name='FastClient-rps',
                 target=FastClient._count_rps,
-                args=(rps_recv, rps, rps10, rps1))
+                args=(rps_recv, rps, rps10, rps1),
+                daemon=True)
             rps_counter.start()
 
         # start ticket creation
         tickets = Process(name='FastClient-ticket-manager',
-                          target=FastClient._create_tickets, args=(self._rate, ticket_sends))
+                          target=FastClient._create_tickets, args=(self._rate, ticket_sends),
+                          daemon=True)
         tickets.start()
 
         # now all the processing happens...

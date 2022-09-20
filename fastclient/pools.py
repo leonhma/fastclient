@@ -70,7 +70,8 @@ class RequestPool:
 
         self._remaining_tasks.value += 1
         future = self._tpool.submit(RequestPool._handle_request, self._sendpipe, self._remaining_tasks, self._cpool,
-                                    request.method, request.url, request.fields, request.headers, request.id)
+                                    request.method, request.url, request.fields, request.headers, request.id,
+                                    request.store)
         future.add_done_callback(RequestPool._handle_future)
 
     def _get_remaining_tasks(self) -> int:
@@ -79,13 +80,13 @@ class RequestPool:
 
     def _teardown(self):
         """Shutdown the pool."""
-        self._tpool.shutdown(wait=True)
+        self._tpool.shutdown(wait=True, cancel_futures=True)
         self._sendpipe.close()
 
     @staticmethod
-    def _handle_request(sendpipe, remaining_tasks, pool: PoolManager, method, url, fields, headers, id) -> HTTPResponse:
+    def _handle_request(sendpipe, remaining_tasks, pool: PoolManager, method, url, fields, headers, id, store) -> HTTPResponse:
         try:
-            return sendpipe, remaining_tasks, Response(pool.request(method, url, fields, headers), id)
+            return sendpipe, remaining_tasks, Response(pool.request(method, url, fields, headers), id, store)
         except Exception as e:
             return sendpipe, remaining_tasks, e
 
